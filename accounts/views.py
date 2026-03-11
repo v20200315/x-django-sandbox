@@ -4,7 +4,6 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
@@ -18,21 +17,19 @@ from .serializers import (
 )
 
 
-def get_tokens_for_user(user: User) -> dict:
+def get_tokens_for_user(user):
     refresh = RefreshToken.for_user(user)
-    return {
-        'access': str(refresh.access_token),
-        'refresh': str(refresh),
-    }
+    return {'access': str(refresh.access_token), 'refresh': str(refresh)}
 
 
+# ---- Register: person only (Option 2) ----
 class RegisterView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
         request=RegisterSerializer,
         responses={201: UserSerializer},
-        summary='Register a new user',
+        summary='Register (person only: email + password)',
         auth=[],
     )
     def post(self, request):
@@ -41,25 +38,19 @@ class RegisterView(APIView):
         user = serializer.save()
         tokens = get_tokens_for_user(user)
         return Response(
-            {
-                'user': UserSerializer(user).data,
-                **tokens,
-            },
+            {'user': UserSerializer(user).data, **tokens},
             status=status.HTTP_201_CREATED,
         )
 
 
+# ---- Login ----
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
 
     @extend_schema(
         request=CustomTokenObtainPairSerializer,
-        responses={
-            200: OpenApiResponse(
-                description='JWT access and refresh tokens returned on successful login'
-            )
-        },
+        responses={200: OpenApiResponse(description='access + refresh tokens')},
         summary='Login with email and password',
         auth=[],
     )
@@ -67,39 +58,39 @@ class LoginView(TokenObtainPairView):
         return super().post(request, *args, **kwargs)
 
 
+# ---- Me: current user + memberships (for active company choice) ----
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={200: UserSerializer},
+        summary='Current user and company memberships',
+    )
+    def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+
+# ---- Forgot / Reset password (unchanged) ----
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
         request=ForgotPasswordSerializer,
-        responses={
-            200: OpenApiResponse(
-                description=(
-                    'Always returns success; if email exists, a reset link/token is generated'
-                )
-            )
-        },
-        summary='Request a password reset',
+        responses={200: OpenApiResponse(description='If email exists, reset sent')},
+        summary='Request password reset',
         auth=[],
     )
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
-
         try:
             user = User.objects.get(email__iexact=email)
-            signer = TimestampSigner()
-            token = signer.sign(user.pk)
-            # TODO: send email with reset link containing token
-            # e.g. f"{frontend_url}/reset-password?token={token}"
+            token = TimestampSigner().sign(str(user.pk))
+            # TODO: send email with reset link
         except User.DoesNotExist:
             pass
-
-        return Response(
-            {'detail': 'If this email exists, a reset link was sent.'},
-            status=status.HTTP_200_OK,
-        )
+        return Response({'detail': 'If this email exists, a reset link was sent.'})
 
 
 class ResetPasswordView(APIView):
@@ -111,26 +102,21 @@ class ResetPasswordView(APIView):
             200: OpenApiResponse(description='Password reset successful'),
             400: OpenApiResponse(description='Invalid or expired token'),
         },
-        summary='Reset password using a reset token',
+        summary='Reset password with token',
         auth=[],
     )
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         token = serializer.validated_data['token']
         new_password = serializer.validated_data['new_password']
-
         signer = TimestampSigner()
         try:
-            user_id = signer.unsign(token, max_age=3600)  # 1 hour
+            user_id = signer.unsign(token, max_age=3600)
             user = User.objects.get(pk=user_id)
             user.set_password(new_password)
             user.save()
-            return Response(
-                {'detail': 'Password reset successful.'},
-                status=status.HTTP_200_OK,
-            )
+            return Response({'detail': 'Password reset successful.'})
         except (BadSignature, SignatureExpired, User.DoesNotExist):
             return Response(
                 {'detail': 'Invalid or expired token.'},
@@ -138,6 +124,7 @@ class ResetPasswordView(APIView):
             )
 
 
+# ---- Logout ----
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -145,20 +132,12 @@ class LogoutView(APIView):
         request={
             'application/json': {
                 'type': 'object',
-                'properties': {
-                    'refresh': {
-                        'type': 'string',
-                        'description': 'Refresh token to blacklist',
-                    },
-                },
+                'properties': {'refresh': {'type': 'string'}},
                 'required': ['refresh'],
             }
         },
-        responses={
-            205: OpenApiResponse(description='Logged out successfully'),
-            400: OpenApiResponse(description='Missing or invalid refresh token'),
-        },
-        summary='Logout and blacklist refresh token',
+        responses={205: OpenApiResponse(description='Logged out')},
+        summary='Logout (blacklist refresh token)',
     )
     def post(self, request):
         refresh_token = request.data.get('refresh')
@@ -167,17 +146,12 @@ class LogoutView(APIView):
                 {'detail': 'Refresh token required.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         try:
-            token = RefreshToken(refresh_token)
-            token.blacklist()
+            RefreshToken(refresh_token).blacklist()
         except Exception:
             return Response(
-                {'detail': 'Invalid token.'},
-                status=status.HTTP_400_BAD_REQUEST,
+                {'detail': 'Invalid token.'}, status=status.HTTP_400_BAD_REQUEST
             )
-
         return Response(
-            {'detail': 'Logged out successfully.'},
-            status=status.HTTP_205_RESET_CONTENT,
+            {'detail': 'Logged out successfully.'}, status=status.HTTP_205_RESET_CONTENT
         )

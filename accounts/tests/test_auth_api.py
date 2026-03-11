@@ -11,7 +11,7 @@ def test_register_login_refresh_logout_reset_flow():
 
     # register
     r = client.post(
-        '/api/auth/register/',
+        '/api/v1/auth/register/',
         {'email': 'a@test.com', 'password': 'StrongPass123'},
         format='json',
     )
@@ -20,7 +20,7 @@ def test_register_login_refresh_logout_reset_flow():
 
     # login
     r = client.post(
-        '/api/auth/login/',
+        '/api/v1/auth/login/',
         {'email': 'a@test.com', 'password': 'StrongPass123'},
         format='json',
     )
@@ -29,23 +29,23 @@ def test_register_login_refresh_logout_reset_flow():
     refresh = r.data['refresh']
 
     # refresh
-    r = client.post('/api/auth/token/refresh/', {'refresh': refresh}, format='json')
+    r = client.post('/api/v1/auth/token/refresh/', {'refresh': refresh}, format='json')
     assert r.status_code == 200
     assert 'access' in r.data
 
     # logout (blacklist refresh)
     client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
-    r = client.post('/api/auth/logout/', {'refresh': refresh}, format='json')
+    r = client.post('/api/v1/auth/logout/', {'refresh': refresh}, format='json')
     assert r.status_code == 205
 
     # refresh should now fail if blacklist is enabled
     client.credentials()  # clear auth header
-    r = client.post('/api/auth/token/refresh/', {'refresh': refresh}, format='json')
+    r = client.post('/api/v1/auth/token/refresh/', {'refresh': refresh}, format='json')
     assert r.status_code in (401, 400)
 
     # forgot password always returns 200
     r = client.post(
-        '/api/auth/forgot-password/', {'email': 'a@test.com'}, format='json'
+        '/api/v1/auth/forgot-password/', {'email': 'a@test.com'}, format='json'
     )
     assert r.status_code == 200
 
@@ -53,7 +53,7 @@ def test_register_login_refresh_logout_reset_flow():
     user = User.objects.get(email='a@test.com')
     token = TimestampSigner().sign(user.pk)
     r = client.post(
-        '/api/auth/reset-password/',
+        '/api/v1/auth/reset-password/',
         {'token': token, 'new_password': 'NewStrongPass123'},
         format='json',
     )
@@ -61,7 +61,7 @@ def test_register_login_refresh_logout_reset_flow():
 
     # login with new password works
     r = client.post(
-        '/api/auth/login/',
+        '/api/v1/auth/login/',
         {'email': 'a@test.com', 'password': 'NewStrongPass123'},
         format='json',
     )
