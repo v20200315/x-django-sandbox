@@ -1,4 +1,4 @@
-## x-django-sandbox
+# x-django-sandbox
 
 A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 
@@ -40,7 +40,7 @@ A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 
 ---
 
-## Setup
+## Quick start
 
 From the project root:
 
@@ -56,7 +56,7 @@ From the project root:
    uv run python manage.py migrate
    ```
 
-3. **Run tests (optional)**
+3. **Run tests**
 
    ```bash
    uv run pytest
@@ -236,6 +236,16 @@ Base path: `/api/v1/companies/`
 
 ---
 
+## Error handling quick reference
+
+- Missing `Authorization` on protected endpoints: `401 Unauthorized`
+- Missing `X-Company-ID` on staff creation: `400 Bad Request`
+- Invalid `X-Company-ID` format: `400 Bad Request`
+- Valid company header but user not member: `403 Forbidden`
+- Member is not `owner` or `admin` for staff creation: `403 Forbidden`
+
+---
+
 ## Testing
 
 Run all tests:
@@ -244,7 +254,7 @@ Run all tests:
 uv run pytest
 ```
 
-Current tests:
+Current suite (pytest + pytest-django):
 
 - `accounts/tests/test_auth_api.py`
   - Full auth flow: register → login → refresh → logout → forgot/reset.
@@ -252,4 +262,23 @@ Current tests:
   - Create company and owner membership.
   - Create staff in that company via `X-Company-ID`.
   - Staff login verification.
+  - Company creation requires auth.
+  - Duplicate company name validation (case-insensitive check in serializer).
+  - Missing/invalid `X-Company-ID` handling.
+  - Permission gate: staff cannot create staff.
+  - Existing user can be attached to a company and role updated.
+
+You can run only company tests:
+
+```bash
+uv run pytest companies/tests/test_companies_api.py
+```
+
+---
+
+## Current behavior notes
+
+- This project uses **one global user per email** and links users to companies through `CompanyMembership`.
+- `POST /api/v1/companies/staff/` currently allows attaching an existing user email to another company (by creating/updating membership).  
+  If your business requires explicit invite/accept, add an invitation flow before creating membership.
    
