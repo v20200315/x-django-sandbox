@@ -6,7 +6,7 @@ A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 - Multi-company (multi-tenant) model via memberships
 - JWT auth (login / refresh / logout)
 - Company creation and staff sub-accounts
-- Single-app architecture (all models in `accounts` app)
+- Two-app architecture (`accounts` + `companies`)
 - API versioning (`/api/v1/...`)
 - Automated API tests with `pytest` / `pytest-django`
 
@@ -37,16 +37,16 @@ A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 ## Project structure (relevant apps)
 
 - `config/` – Django project settings, URLs, WSGI/ASGI
-- `accounts/` – **Single app containing all models and business logic**
+- `accounts/` – **Auth & identity**
   - Custom `User` model (UUID primary key, email login)
+  - Authentication API (register, login, refresh, logout, forgot/reset, me)
+- `companies/` – **Company domain**
   - `Company` model
   - `CompanyMembership` + `CompanyRole` (links users to companies)
-  - Authentication API (register, login, refresh, logout, forgot/reset)
-  - Company API (create company, create staff accounts)
+  - Company API (create company, create staff, list memberships)
   - `tenant.py` – reads `X-Company-ID` and validates membership
-- `tests/`
-  - `accounts/tests/test_auth_api.py` – end-to-end auth flow
-  - `accounts/tests/test_companies_api.py` – company + staff flows
+- `accounts/tests/test_auth_api.py` – auth flow
+- `companies/tests/test_companies_api.py` – company + staff flows
 
 ---
 
@@ -125,21 +125,15 @@ Base path: `/api/v1/auth/`
     ```
   - Blacklists the refresh token.
 
-- **Current user + memberships**
+- **Current user**
   - `GET /api/v1/auth/me/`
   - Headers: `Authorization: Bearer <access>`
-  - Response: `UserSerializer` including `memberships`:
+  - Response: user identity only (`id`, `email`, `date_joined`):
     ```json
     {
       "id": "...",
       "email": "user@example.com",
-      "memberships": [
-        {
-          "id": "...",
-          "company": { "id": "...", "name": "ACME", "created_at": "..." },
-          "role": "owner"
-        }
-      ]
+      "date_joined": "2025-01-01T00:00:00Z"
     }
     ```
 
@@ -161,13 +155,29 @@ Base path: `/api/v1/auth/`
 
 ---
 
-### Companies & staff (app: `accounts`)
+### Companies & staff (app: `companies`)
 
-Base path: `/api/v1/auth/companies/`
+Base path: `/api/v1/companies/`
 
-#### 1. Create a company
+#### 1. List my memberships
 
-- `POST /api/v1/auth/companies/`
+- `GET /api/v1/companies/memberships/`
+- Headers: `Authorization: Bearer <access>`
+- Response: list of memberships with company and role:
+  ```json
+  [
+    {
+      "id": "...",
+      "company": { "id": "...", "name": "ACME", "created_at": "..." },
+      "role": "owner",
+      "created_at": "..."
+    }
+  ]
+  ```
+
+#### 2. Create a company
+
+- `POST /api/v1/companies/`
 - Headers: `Authorization: Bearer <access>`
 - Body:
   ```json
@@ -181,9 +191,9 @@ Base path: `/api/v1/auth/companies/`
   { "id": "<company_uuid>", "name": "ACME" }
   ```
 
-#### 2. Create a staff sub-account
+#### 3. Create a staff sub-account
 
-- `POST /api/v1/auth/companies/staff/`
+- `POST /api/v1/companies/staff/`
 - Headers:
   - `Authorization: Bearer <access>`
   - `X-Company-ID: <company_uuid>`  ← **explicit active company**
@@ -222,16 +232,16 @@ Base path: `/api/v1/auth/companies/`
    - `POST /api/v1/auth/login/` → get `access` & `refresh`.
 
 3. **Person creates a company**
-   - `POST /api/v1/auth/companies/` with `Authorization: Bearer <access>` and `{ "name": "ACME" }`.
+   - `POST /api/v1/companies/` with `Authorization: Bearer <access>` and `{ "name": "ACME" }`.
    - Becomes `owner` of `ACME`.
 
 4. **Person views their memberships**
-   - `GET /api/v1/auth/me/` with `Authorization: Bearer <access>`.
+   - `GET /api/v1/companies/memberships/` with `Authorization: Bearer <access>`.
    - Client sees list of companies + roles (e.g. `ACME` as `owner`).
 
 5. **Owner creates staff accounts for a company**
-   - Choose an active company from `me` response (e.g. `company_id = "<ACME_UUID>"`).
-   - `POST /api/v1/auth/companies/staff/` with:
+   - Choose an active company from memberships response (e.g. `company_id = "<ACME_UUID>"`).
+   - `POST /api/v1/companies/staff/` with:
      - `Authorization: Bearer <access>`
      - `X-Company-ID: <ACME_UUID>`
      - Body: staff email/password/role.
@@ -241,7 +251,7 @@ Base path: `/api/v1/auth/companies/`
    - On the frontend, you decide which company context to operate in, using `X-Company-ID` for company-scoped endpoints.
 
 7. **User switches between companies**
-   - Call `GET /api/v1/auth/me/` to see all memberships.
+   - Call `GET /api/v1/companies/memberships/` to see all memberships.
    - For each company-scoped request, send the desired `X-Company-ID` header.
 
 ---
@@ -268,9 +278,10 @@ Current suite (pytest + pytest-django):
 
 - `accounts/tests/test_auth_api.py`
   - Full auth flow: register → login → refresh → logout → forgot/reset.
-- `accounts/tests/test_companies_api.py`
+- `companies/tests/test_companies_api.py`
   - Create company and owner membership.
   - Create staff in that company via `X-Company-ID`.
+  - Memberships endpoint (list, auth required).
   - Staff login verification.
   - Company creation requires auth.
   - Duplicate company name validation (case-insensitive check in serializer).
@@ -281,15 +292,15 @@ Current suite (pytest + pytest-django):
 You can run only company tests:
 
 ```bash
-uv run pytest accounts/tests/test_companies_api.py
+uv run pytest companies/tests/test_companies_api.py
 ```
 
 ---
 
 ## Current behavior notes
 
-- This project uses a **single-app architecture** with all models in the `accounts` app for simplicity and to avoid circular dependencies.
+- **Two-app architecture**: `accounts` (User, auth) and `companies` (Company, CompanyMembership, CompanyRole). Companies imports from accounts per the one-way dependency rule.
 - Uses **one global user per email** and links users to companies through `CompanyMembership`.
-- `POST /api/v1/auth/companies/staff/` currently allows attaching an existing user email to another company (by creating/updating membership).
-  If your business requires explicit invite/accept, add an invitation flow before creating membership.
+- `GET /api/v1/auth/me/` returns user identity only; `GET /api/v1/companies/memberships/` returns company memberships.
+- `POST /api/v1/companies/staff/` allows attaching an existing user email to another company (by creating/updating membership). If your business requires explicit invite/accept, add an invitation flow.
    

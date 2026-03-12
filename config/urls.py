@@ -8,8 +8,10 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # Auth/person APIs and Company APIs
+    # Auth APIs
     path('api/v1/auth/', include('accounts.urls')),
+    # Company APIs
+    path('api/v1/companies/', include('companies.urls')),
     # OpenAPI schema + docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

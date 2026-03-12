@@ -1,11 +1,94 @@
 import pytest
 from rest_framework.test import APIClient
 
-from accounts.models import Company, CompanyMembership, CompanyRole, User
+from accounts.models import User
+from companies.models import Company, CompanyMembership, CompanyRole
+
+
+def _register_and_login(client, email, password):
+    """Helper: register and login, return access token"""
+    r = client.post(
+        '/api/v1/auth/register/',
+        {'email': email, 'password': password},
+        format='json',
+    )
+    assert r.status_code == 201
+    r = client.post(
+        '/api/v1/auth/login/',
+        {'email': email, 'password': password},
+        format='json',
+    )
+    assert r.status_code == 200
+    return r.data['access']
+
+
+def _create_company(client, name):
+    """Helper: create company, return company_id"""
+    r = client.post('/api/v1/companies/', {'name': name}, format='json')
+    assert r.status_code == 201
+    return r.data['id']
+
+
+@pytest.mark.django_db
+def test_me_endpoint_returns_only_user_data():
+    """Test that /me returns only user data without memberships"""
+    client = APIClient()
+    access = _register_and_login(client, 'user@test.com', 'StrongPass123')
+    client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+    # Create a company so user has a membership
+    _create_company(client, 'TestCo')
+
+    # Call /me endpoint
+    r = client.get('/api/v1/auth/me/')
+    assert r.status_code == 200
+    assert 'id' in r.data
+    assert 'email' in r.data
+    assert r.data['email'] == 'user@test.com'
+    assert 'date_joined' in r.data
+    # Memberships should NOT be in the response
+    assert 'memberships' not in r.data
+
+
+@pytest.mark.django_db
+def test_memberships_endpoint_returns_user_memberships():
+    """Test that /companies/memberships/ returns user's company memberships"""
+    client = APIClient()
+    access = _register_and_login(client, 'owner@test.com', 'StrongPass123')
+    client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+
+    # Create two companies
+    _create_company(client, 'Company1')
+    _create_company(client, 'Company2')
+
+    # Call memberships endpoint
+    r = client.get('/api/v1/companies/memberships/')
+    assert r.status_code == 200
+    assert isinstance(r.data, list)
+    assert len(r.data) == 2
+
+    # Check structure
+    for membership in r.data:
+        assert 'id' in membership
+        assert 'company' in membership
+        assert 'role' in membership
+        assert 'created_at' in membership
+        assert membership['role'] == 'owner'
+        assert 'id' in membership['company']
+        assert 'name' in membership['company']
+
+
+@pytest.mark.django_db
+def test_memberships_endpoint_requires_auth():
+    """Test that /companies/memberships/ requires authentication"""
+    client = APIClient()
+    r = client.get('/api/v1/companies/memberships/')
+    assert r.status_code == 401
 
 
 @pytest.mark.django_db
 def test_create_company_and_staff_flow():
+    """Full workflow: register, create company, add staff, verify memberships"""
     client = APIClient()
 
     # 1) Register person (no company yet)
@@ -27,24 +110,42 @@ def test_create_company_and_staff_flow():
     access = r.data['access']
     client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
 
-    # 3) Create company (owner)
+    # 3) Check /me returns only user data
+    r = client.get('/api/v1/auth/me/')
+    assert r.status_code == 200
+    assert r.data['email'] == 'owner@test.com'
+    assert 'memberships' not in r.data
+
+    # 4) Check memberships endpoint returns empty list
+    r = client.get('/api/v1/companies/memberships/')
+    assert r.status_code == 200
+    assert r.data == []
+
+    # 5) Create company (owner)
     r = client.post(
-        '/api/v1/auth/companies/',
+        '/api/v1/companies/',
         {'name': 'ACME'},
         format='json',
     )
     assert r.status_code == 201
     company_id = r.data['id']
 
-    # DB checks: company + owner membership
+    # 6) Verify membership was created in DB
     company = Company.objects.get(id=company_id)
     owner = User.objects.get(id=owner_id)
     membership = CompanyMembership.objects.get(user=owner, company=company)
     assert membership.role == CompanyRole.OWNER
 
-    # 4) Create staff in this company
+    # 7) Check memberships endpoint now returns the membership
+    r = client.get('/api/v1/companies/memberships/')
+    assert r.status_code == 200
+    assert len(r.data) == 1
+    assert r.data[0]['company']['name'] == 'ACME'
+    assert r.data[0]['role'] == 'owner'
+
+    # 8) Create staff in this company
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': 'staff@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
@@ -56,14 +157,23 @@ def test_create_company_and_staff_flow():
     staff_membership = CompanyMembership.objects.get(user=staff_user, company=company)
     assert staff_membership.role == CompanyRole.STAFF
 
-    # 5) Staff can log in with the password (since newly created)
-    client.credentials()  # clear header
+    # 9) Staff can log in
+    client.credentials()
     r = client.post(
         '/api/v1/auth/login/',
         {'email': 'staff@test.com', 'password': 'StaffPass123'},
         format='json',
     )
     assert r.status_code == 200
+    staff_access = r.data['access']
+
+    # 10) Staff can see their membership
+    client.credentials(HTTP_AUTHORIZATION=f'Bearer {staff_access}')
+    r = client.get('/api/v1/companies/memberships/')
+    assert r.status_code == 200
+    assert len(r.data) == 1
+    assert r.data[0]['company']['name'] == 'ACME'
+    assert r.data[0]['role'] == 'staff'
 
 
 @pytest.mark.django_db
@@ -88,7 +198,7 @@ def test_staff_create_requires_membership_and_owner_role():
 
     # Try to create staff with some random company id → should 403 or 400
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': 'someone@test.com', 'password': 'Pass12345', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID='00000000-0000-0000-0000-000000000000',
@@ -96,32 +206,10 @@ def test_staff_create_requires_membership_and_owner_role():
     assert r.status_code in (400, 403)
 
 
-def _register_and_login(client, email, password):
-    r = client.post(
-        '/api/v1/auth/register/',
-        {'email': email, 'password': password},
-        format='json',
-    )
-    assert r.status_code == 201
-    r = client.post(
-        '/api/v1/auth/login/',
-        {'email': email, 'password': password},
-        format='json',
-    )
-    assert r.status_code == 200
-    return r.data['access']
-
-
-def _create_company(client, name):
-    r = client.post('/api/v1/auth/companies/', {'name': name}, format='json')
-    assert r.status_code == 201
-    return r.data['id']
-
-
 @pytest.mark.django_db
 def test_create_company_requires_auth():
     client = APIClient()
-    r = client.post('/api/v1/auth/companies/', {'name': 'ACME'}, format='json')
+    r = client.post('/api/v1/companies/', {'name': 'ACME'}, format='json')
     assert r.status_code == 401
 
 
@@ -133,7 +221,7 @@ def test_create_company_rejects_duplicate_name_case_insensitive():
 
     _create_company(client, 'AcMe')
 
-    r = client.post('/api/v1/auth/companies/', {'name': 'acme'}, format='json')
+    r = client.post('/api/v1/companies/', {'name': 'acme'}, format='json')
     assert r.status_code == 400
     assert 'name' in r.data
 
@@ -146,7 +234,7 @@ def test_staff_create_requires_x_company_id_header():
     _create_company(client, 'HeaderCo')
 
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': 'staff1@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
     )
@@ -162,7 +250,7 @@ def test_staff_create_rejects_invalid_company_id_header():
     _create_company(client, 'InvalidHeaderCo')
 
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': 'staff2@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID='not-a-uuid',
@@ -180,7 +268,7 @@ def test_staff_role_cannot_create_other_staff():
 
     # Owner creates a staff user
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': 'staff3@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
@@ -201,7 +289,7 @@ def test_staff_role_cannot_create_other_staff():
 
     client.credentials(HTTP_AUTHORIZATION=f'Bearer {staff_access}')
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': 'staff5@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
@@ -220,7 +308,7 @@ def test_staff_create_existing_user_adds_membership_and_updates_role():
     existing = User.objects.create_user('existing@test.com', 'ExistingPass123')
 
     r = client.post(
-        '/api/v1/auth/companies/staff/',
+        '/api/v1/companies/staff/',
         {'email': existing.email, 'password': 'IgnoredPass123', 'role': 'admin'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
