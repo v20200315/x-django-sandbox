@@ -12,6 +12,16 @@ A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 
 ---
 
+## App isolation rule
+
+> **One-way dependency rule**
+>
+> - **`accounts`** is the base app and **never imports from other apps**.
+> - Other apps (e.g. `orders`, `submissions`) **may import from `accounts` only**.
+> - **No cross-imports** between peer apps (e.g. `orders` ↔ `submissions`).
+
+---
+
 ## Stack
 
 - **Python**: 3.12+
