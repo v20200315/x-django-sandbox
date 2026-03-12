@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py makemigrations)",
+      "Bash(python manage.py migrate)",
+      "Bash(pytest accounts/tests/test_companies_api.py -v)",
+      "Bash(pytest accounts/tests/test_auth_api.py -v)",
+      "Bash(ls -la | grep -E \"^d\" | grep -v \"^\\\\.$\")",
+      "Bash(pytest -v)",
+      "Bash(pytest -v --tb=short)"
+    ]
+  }
+}

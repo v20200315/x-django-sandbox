@@ -1,8 +1,7 @@
 import pytest
 from rest_framework.test import APIClient
 
-from accounts.models import CompanyMembership, CompanyRole, User
-from companies.models import Company
+from accounts.models import Company, CompanyMembership, CompanyRole, User
 
 
 @pytest.mark.django_db
@@ -30,7 +29,7 @@ def test_create_company_and_staff_flow():
 
     # 3) Create company (owner)
     r = client.post(
-        '/api/v1/companies/',
+        '/api/v1/auth/companies/',
         {'name': 'ACME'},
         format='json',
     )
@@ -45,7 +44,7 @@ def test_create_company_and_staff_flow():
 
     # 4) Create staff in this company
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': 'staff@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
@@ -89,7 +88,7 @@ def test_staff_create_requires_membership_and_owner_role():
 
     # Try to create staff with some random company id → should 403 or 400
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': 'someone@test.com', 'password': 'Pass12345', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID='00000000-0000-0000-0000-000000000000',
@@ -114,7 +113,7 @@ def _register_and_login(client, email, password):
 
 
 def _create_company(client, name):
-    r = client.post('/api/v1/companies/', {'name': name}, format='json')
+    r = client.post('/api/v1/auth/companies/', {'name': name}, format='json')
     assert r.status_code == 201
     return r.data['id']
 
@@ -122,7 +121,7 @@ def _create_company(client, name):
 @pytest.mark.django_db
 def test_create_company_requires_auth():
     client = APIClient()
-    r = client.post('/api/v1/companies/', {'name': 'ACME'}, format='json')
+    r = client.post('/api/v1/auth/companies/', {'name': 'ACME'}, format='json')
     assert r.status_code == 401
 
 
@@ -134,7 +133,7 @@ def test_create_company_rejects_duplicate_name_case_insensitive():
 
     _create_company(client, 'AcMe')
 
-    r = client.post('/api/v1/companies/', {'name': 'acme'}, format='json')
+    r = client.post('/api/v1/auth/companies/', {'name': 'acme'}, format='json')
     assert r.status_code == 400
     assert 'name' in r.data
 
@@ -147,7 +146,7 @@ def test_staff_create_requires_x_company_id_header():
     _create_company(client, 'HeaderCo')
 
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': 'staff1@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
     )
@@ -163,7 +162,7 @@ def test_staff_create_rejects_invalid_company_id_header():
     _create_company(client, 'InvalidHeaderCo')
 
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': 'staff2@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID='not-a-uuid',
@@ -181,7 +180,7 @@ def test_staff_role_cannot_create_other_staff():
 
     # Owner creates a staff user
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': 'staff3@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
@@ -202,7 +201,7 @@ def test_staff_role_cannot_create_other_staff():
 
     client.credentials(HTTP_AUTHORIZATION=f'Bearer {staff_access}')
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': 'staff5@test.com', 'password': 'StaffPass123', 'role': 'staff'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,
@@ -221,7 +220,7 @@ def test_staff_create_existing_user_adds_membership_and_updates_role():
     existing = User.objects.create_user('existing@test.com', 'ExistingPass123')
 
     r = client.post(
-        '/api/v1/companies/staff/',
+        '/api/v1/auth/companies/staff/',
         {'email': existing.email, 'password': 'IgnoredPass123', 'role': 'admin'},
         format='json',
         HTTP_X_COMPANY_ID=company_id,

@@ -6,6 +6,7 @@ A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 - Multi-company (multi-tenant) model via memberships
 - JWT auth (login / refresh / logout)
 - Company creation and staff sub-accounts
+- Single-app architecture (all models in `accounts` app)
 - API versioning (`/api/v1/...`)
 - Automated API tests with `pytest` / `pytest-django`
 
@@ -26,17 +27,16 @@ A Django 6 + DRF + SimpleJWT sandbox that demonstrates:
 ## Project structure (relevant apps)
 
 - `config/` – Django project settings, URLs, WSGI/ASGI
-- `accounts/`
+- `accounts/` – **Single app containing all models and business logic**
   - Custom `User` model (UUID primary key, email login)
-  - Authentication API (register, login, refresh, logout, forgot/reset)
-  - `CompanyMembership` + `CompanyRole` (links users to companies)
-  - `tenant.py` – reads `X-Company-ID` and validates membership
-- `companies/`
   - `Company` model
+  - `CompanyMembership` + `CompanyRole` (links users to companies)
+  - Authentication API (register, login, refresh, logout, forgot/reset)
   - Company API (create company, create staff accounts)
+  - `tenant.py` – reads `X-Company-ID` and validates membership
 - `tests/`
   - `accounts/tests/test_auth_api.py` – end-to-end auth flow
-  - `companies/tests/test_companies_api.py` – company + staff flows
+  - `accounts/tests/test_companies_api.py` – company + staff flows
 
 ---
 
@@ -151,13 +151,13 @@ Base path: `/api/v1/auth/`
 
 ---
 
-### Companies & staff (app: `companies`)
+### Companies & staff (app: `accounts`)
 
-Base path: `/api/v1/companies/`
+Base path: `/api/v1/auth/companies/`
 
 #### 1. Create a company
 
-- `POST /api/v1/companies/`
+- `POST /api/v1/auth/companies/`
 - Headers: `Authorization: Bearer <access>`
 - Body:
   ```json
@@ -173,7 +173,7 @@ Base path: `/api/v1/companies/`
 
 #### 2. Create a staff sub-account
 
-- `POST /api/v1/companies/staff/`
+- `POST /api/v1/auth/companies/staff/`
 - Headers:
   - `Authorization: Bearer <access>`
   - `X-Company-ID: <company_uuid>`  ← **explicit active company**
@@ -212,7 +212,7 @@ Base path: `/api/v1/companies/`
    - `POST /api/v1/auth/login/` → get `access` & `refresh`.
 
 3. **Person creates a company**
-   - `POST /api/v1/companies/` with `Authorization: Bearer <access>` and `{ "name": "ACME" }`.
+   - `POST /api/v1/auth/companies/` with `Authorization: Bearer <access>` and `{ "name": "ACME" }`.
    - Becomes `owner` of `ACME`.
 
 4. **Person views their memberships**
@@ -221,7 +221,7 @@ Base path: `/api/v1/companies/`
 
 5. **Owner creates staff accounts for a company**
    - Choose an active company from `me` response (e.g. `company_id = "<ACME_UUID>"`).
-   - `POST /api/v1/companies/staff/` with:
+   - `POST /api/v1/auth/companies/staff/` with:
      - `Authorization: Bearer <access>`
      - `X-Company-ID: <ACME_UUID>`
      - Body: staff email/password/role.
@@ -258,7 +258,7 @@ Current suite (pytest + pytest-django):
 
 - `accounts/tests/test_auth_api.py`
   - Full auth flow: register → login → refresh → logout → forgot/reset.
-- `companies/tests/test_companies_api.py`
+- `accounts/tests/test_companies_api.py`
   - Create company and owner membership.
   - Create staff in that company via `X-Company-ID`.
   - Staff login verification.
@@ -271,14 +271,15 @@ Current suite (pytest + pytest-django):
 You can run only company tests:
 
 ```bash
-uv run pytest companies/tests/test_companies_api.py
+uv run pytest accounts/tests/test_companies_api.py
 ```
 
 ---
 
 ## Current behavior notes
 
-- This project uses **one global user per email** and links users to companies through `CompanyMembership`.
-- `POST /api/v1/companies/staff/` currently allows attaching an existing user email to another company (by creating/updating membership).  
+- This project uses a **single-app architecture** with all models in the `accounts` app for simplicity and to avoid circular dependencies.
+- Uses **one global user per email** and links users to companies through `CompanyMembership`.
+- `POST /api/v1/auth/companies/staff/` currently allows attaching an existing user email to another company (by creating/updating membership).
   If your business requires explicit invite/accept, add an invitation flow before creating membership.
    
