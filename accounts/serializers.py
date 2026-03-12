@@ -12,7 +12,7 @@ class CompanySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class MembershipSerializer(serializers.ModelSerializer):
+class CompanyMembershipSerializer(serializers.ModelSerializer):
     company = CompanySerializer(read_only=True)
 
     class Meta:
@@ -22,7 +22,7 @@ class MembershipSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    memberships = MembershipSerializer(many=True, read_only=True)
+    memberships = CompanyMembershipSerializer(many=True, read_only=True)
 
     class Meta:
         model = User
