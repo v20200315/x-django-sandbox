@@ -1,11 +1,7 @@
 from django.urls import include, path
-from rest_framework.routers import DefaultRouter
-
-from .views import DIViewSet
-
-router = DefaultRouter()
-router.register(r'', DIViewSet, basename='di')
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path('dis/', include('identifiers.urls_di')),
+    path('ais/', include('identifiers.urls_ai')),
+    path('udidipi/', include('identifiers.urls_udidipi')),
 ]

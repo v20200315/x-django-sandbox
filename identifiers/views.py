@@ -2,9 +2,29 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from .models import DI
+from .models import AI, DI
 from .permissions import IsOwner
-from .serializers import DISerializer
+from .serializers import AISerializer, DISerializer
+
+
+class AIPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class AIViewSet(ModelViewSet):
+    """
+    CRUD for AI (Application Identifier) - base/reference data.
+    All authenticated users can view the list.
+    List is paginated.
+    """
+
+    queryset = AI.objects.all()
+    serializer_class = AISerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = AIPagination
+    lookup_url_kwarg = 'id'
 
 
 class DIPagination(PageNumberPagination):
