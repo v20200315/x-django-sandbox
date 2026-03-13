@@ -10,4 +10,3 @@ class DIAdmin(admin.ModelAdmin):
     search_fields = ('value', 'owner__email')
     raw_id_fields = ('owner',)
     readonly_fields = ('id', 'created_at', 'updated_at')
-
